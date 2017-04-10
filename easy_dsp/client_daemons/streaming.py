@@ -73,7 +73,7 @@ class StreamClient(WebSocketClient):
         if not message.is_binary:  # new configuration
             global sample_rate, channel_count, frame_count, volume
 
-            msg = json.loads(message.data)
+            msg = json.loads(message.data.decode('utf-8'))
             sample_rate = msg['rate']
             channel_count = msg['channels']
             frame_count = msg['buffer_frames']
