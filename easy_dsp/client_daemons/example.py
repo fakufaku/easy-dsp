@@ -6,6 +6,7 @@
 # Author        : Sepand KASHANI [sep@zurich.ibm.com]
 # ######################################################################################################################
 
+import numpy
 from easy_dsp.client_daemons import streaming as stream
 import datetime
 
@@ -22,7 +23,7 @@ EASY_DSP_AUDIO_BUFFER_SIZE_BYTES = int((EASY_DSP_NUM_CHANNELS * EASY_DSP_AUDIO_F
 
 ### streaming.py Settings ##############################################################################################
 #stream.EASY_DSP_BOARD_IP_ADDRESS = '10.42.0.2'
-stream.EASY_DSP_BOARD_IP_ADDRESS = '192.168.2.24'
+stream.EASY_DSP_BOARD_IP_ADDRESS = '192.168.2.26'
 stream.EASY_DSP_WSAUDIO_SERVER_PORT = 7321
 stream.EASY_DSP_WSCONFIG_SERVER_PORT = 7322
 stream.sample_rate = EASY_DSP_AUDIO_FREQ_HZ
@@ -33,9 +34,12 @@ stream.volume = EASY_DSP_VOLUME
 
 ### Define Callbacks ###################################################################################################
 def handle_samples(buffer):
-    printProgress("handle_buffer: received {count} bytes | shape {shape} | type {dtype}".format(count=buffer.nbytes,
+    printProgress("handle_buffer: received {count} bytes | shape {shape} | type {dtype} | energy {pwr}".format(
+                                                                                                count=buffer.nbytes,
                                                                                                 shape=buffer.shape,
-                                                                                                dtype=buffer.dtype, ))
+                                                                                                dtype=buffer.dtype,
+                                                                                                pwr=numpy.mean(buffer**2)
+                                                                                                ))
 
 def handle_config(args=None):
     printProgress(
