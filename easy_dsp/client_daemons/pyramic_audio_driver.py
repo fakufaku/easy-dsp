@@ -19,7 +19,7 @@ import time
 import numpy as np
 
 
-SOUNDFLOWER_2CH = "Soundflower (64ch)"
+SOUNDFLOWER_64CH = "Soundflower (64ch)"
 
 
 def select_device_by_name(name):
@@ -80,7 +80,7 @@ class StreamClient(WebSocketClient):
 
 
 # Change the configuration (WSConfig)
-def change_config(rate=None, channels=None, buffer_frames=None, volume=None):
+def change_config(url, rate=None, channels=None, buffer_frames=None, volume=None):
     if rate is None:
         rate = globals()["rate"]
     if channels is None:
@@ -105,7 +105,7 @@ def change_config(rate=None, channels=None, buffer_frames=None, volume=None):
             self.close()
 
     change_config_q = WSConfigClient(
-        "ws://" + self.url + ":7322/", protocols=["http-only", "chat"]
+        "ws://" + url + ":7322/", protocols=["http-only", "chat"]
     )
     change_config_q.connect()
 
@@ -136,7 +136,7 @@ class PyramicAudioDriver(object):
         self.current_buffer_ptr = 0
 
         if self.audio_device is None:
-            self.audio_device = SOUNDFLOWER_2CH
+            self.audio_device = SOUNDFLOWER_64CH
 
         if self.url is None:
             self.url = "192.168.2.26"
@@ -160,9 +160,9 @@ class PyramicAudioDriver(object):
             protocols=["http-only", "chat"],
         )
 
-        self.clientThread = Thread(target=self._websocket_client_thread)
-        self.clientThread.daemon = True
-        self.clientThread.start()
+        self.ws_thread = Thread(target=self._websocket_client_thread)
+        self.ws_thread.daemon = True
+        self.ws_thread.start()
 
         n_chan = self.dev_info["max_output_channels"]
 
@@ -187,6 +187,9 @@ class PyramicAudioDriver(object):
                 print("Stopping the audio device")
                 pass
 
+            # stop the websocket
+            self._stop()
+
     def _websocket_client_thread(self):
 
         try:
@@ -196,9 +199,11 @@ class PyramicAudioDriver(object):
             self._stop()
 
     def _stop(self):
-        print("Manual interuption.")
+        print("Stopping the websocket")
         if self.ws is not None:
             self.ws.close()
+
+        self.ws_thread.join()
 
     def _audio_callback(self, indata, outdata, frames, t, status):
         if status:
@@ -282,9 +287,15 @@ if __name__ == "__main__":
         default="pyramic.local",
         help="The address of the Pyramic array on the network",
     )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=SOUNDFLOWER_64CH,
+        help="Name of the virtual audio device",
+    )
     args = parser.parse_args()
 
     # convert the name to an IP address
     addr = socket.gethostbyname(args.url)
 
-    PyramicAudioDriver(url=addr, q_maxsize=10).run()
+    PyramicAudioDriver(audio_device=args.device, url=addr, q_maxsize=10).run()
