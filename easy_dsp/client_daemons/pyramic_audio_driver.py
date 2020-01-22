@@ -1,7 +1,16 @@
-#!/usr/local/bin/python
+"""
+Copyright (C) 2020 Robin Scheibler (fakufaku@gmail.com)
+
+This is an audio driver for the pyramic device connected via the network.
+
+The driver relies on the availability of a virtual audio device such as
+Soundflower on macOS or snd-aloop on Linux. It gets the samples from the network
+via the easy-dsp websocket and routes them to the virtual audio interface.
+"""
 import argparse
 from threading import Thread
 from queue import Queue
+import socket
 
 from ws4py.client.threadedclient import WebSocketClient
 import sounddevice as sd
@@ -64,7 +73,10 @@ class StreamClient(WebSocketClient):
             # We convert the binary stream into a 2D Numpy array of 16-bits integers
             raw_data = np.frombuffer(m.data, dtype=np.int16)
             audio_buffer = raw_data.reshape(-1, self.channels)
-            self.frame_queue.put(audio_buffer)
+            if not self.frame_queue.full():
+                self.frame_queue.put(audio_buffer)
+            else:
+                print("Buffer overflow")
 
 
 # Change the configuration (WSConfig)
@@ -116,6 +128,7 @@ class PyramicAudioDriver(object):
         self.buffer_frames = buffer_frames
         self.volume = volume
 
+        self.q_maxsize = q_maxsize
         self.frame_queue = Queue(maxsize=q_maxsize)
         self.config_queue = Queue(maxsize=q_maxsize)
 
@@ -128,16 +141,26 @@ class PyramicAudioDriver(object):
         if self.url is None:
             self.url = "192.168.2.26"
 
+        # placeholder for the websocket client object
+        self.ws = None
+
         self.dev_info = select_device_by_name(self.audio_device)
         sd.default.dtype = np.int16
 
-        # We know that pyramic is 
+        # We know that pyramic is
         sd.default.samplerate = self.rate
-        time.sleep(1.)
+        time.sleep(1.0)
 
     def run(self):
 
-        self.clientThread = Thread(target=self._start_client_thread)
+        self.ws = StreamClient(
+            self.frame_queue,
+            self.config_queue,
+            "ws://" + self.url + ":7321/",
+            protocols=["http-only", "chat"],
+        )
+
+        self.clientThread = Thread(target=self._websocket_client_thread)
         self.clientThread.daemon = True
         self.clientThread.start()
 
@@ -155,28 +178,27 @@ class PyramicAudioDriver(object):
                         ) = self.config_queue.get()
                         self.print_config()
 
-                    if self.frame_queue.qsize() > self.frame_queue.qsize() // 2:
-                        print("Warning: queue is half full.")
+                    q_size = self.frame_queue.qsize()
+                    if q_size > self.q_maxsize // 2:
+                        print("Warning: queue is half full {q_size}/{self.q_maxsize}.")
                     sd.sleep(1000)
 
             except KeyboardInterrupt:
                 print("Stopping the audio device")
                 pass
 
-    def _start_client_thread(self):
+    def _websocket_client_thread(self):
 
         try:
-            ws = StreamClient(
-                self.frame_queue,
-                self.config_queue,
-                "ws://" + self.url + ":7321/",
-                protocols=["http-only", "chat"],
-            )
-            ws.connect()
-            ws.run_forever()
+            self.ws.connect()
+            self.ws.run_forever()
         except KeyboardInterrupt:
-            print("Manual interuption.")
-            ws.close()
+            self._stop()
+
+    def _stop(self):
+        print("Manual interuption.")
+        if self.ws is not None:
+            self.ws.close()
 
     def _audio_callback(self, indata, outdata, frames, t, status):
         if status:
@@ -189,7 +211,7 @@ class PyramicAudioDriver(object):
             outdata[:, :n_chan] = fresh[:, :n_chan]
         else:
             outdata[:] = 0
-            print("Skip a frame")
+            print("Underflow")
 
     def print_config(self):
         print(
@@ -253,5 +275,16 @@ class PyramicAudioDriver(object):
 
 if __name__ == "__main__":
 
-    driver = PyramicAudioDriver(url="192.168.2.26", q_maxsize=10)
-    driver.run()
+    parser = argparse.ArgumentParser(description="Audio driver for the Pyramic array")
+    parser.add_argument(
+        "--url",
+        type=str,
+        default="pyramic.local",
+        help="The address of the Pyramic array on the network",
+    )
+    args = parser.parse_args()
+
+    # convert the name to an IP address
+    addr = socket.gethostbyname(args.url)
+
+    PyramicAudioDriver(url=addr, q_maxsize=10).run()
